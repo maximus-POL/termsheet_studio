@@ -121,6 +121,13 @@ def fallback_selector() -> tuple[bool, dict[str, Any]]:
                 "Copilot URL",
                 value=os.getenv("SELENIUM_COPILOT_URL", SELENIUM_COPILOT_URL),
             )
+            settings["chromedriver_path"] = st.text_input(
+                "ChromeDriver path",
+                value=os.getenv(
+                    "SELENIUM_CHROMEDRIVER_PATH",
+                    "chromedriver-win64/chromedriver.exe",
+                ),
+            )
             col1, col2 = st.columns(2)
             settings["initial_wait_seconds"] = col1.number_input(
                 "Initial wait seconds",
@@ -183,6 +190,7 @@ def apply_fallback_settings(use_copilot: bool, settings: dict[str, Any]) -> None
         return
 
     set_env_if_value("SELENIUM_COPILOT_URL", settings.get("copilot_url"))
+    set_env_if_value("SELENIUM_CHROMEDRIVER_PATH", settings.get("chromedriver_path"))
     set_env_if_value(
         "SELENIUM_COPILOT_INITIAL_WAIT_SECONDS",
         settings.get("initial_wait_seconds"),

@@ -69,14 +69,18 @@ def extract_fields_with_copilot(extracted_text: str) -> dict[str, Any]:
 def run_copilot_prompt(prompt: str) -> str:
     from selenium.webdriver import Chrome
     from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.common.keys import Keys
     import pyperclip
+
+    driver_path = os.getenv("SELENIUM_CHROMEDRIVER_PATH", "chromedriver-win64/chromedriver.exe")
+    service = Service(driver_path)
 
     prefs = {"profile.default_content_setting_values.clipboard": 1}
     chrome_options = Options()
     chrome_options.add_experimental_option("prefs", prefs)
 
-    driver = Chrome(options=chrome_options)
+    driver = Chrome(service=service, options=chrome_options)
     try:
         driver.get(os.getenv("SELENIUM_COPILOT_URL", URL_COPILOT))
         time.sleep(float(os.getenv("SELENIUM_COPILOT_INITIAL_WAIT_SECONDS", "10")))
