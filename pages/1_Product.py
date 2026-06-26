@@ -114,22 +114,12 @@ def fallback_selector() -> tuple[bool, dict[str, Any]]:
     if use_copilot:
         with st.expander("Selenium Copilot settings", expanded=True):
             st.caption(
-                "Requires Chrome, ChromeDriver/Selenium Manager, and a Microsoft 365 chat session "
-                "that can answer prompts. A visible browser may open during parsing."
+                "Requires Chrome, Selenium Manager/ChromeDriver, and a Microsoft 365 chat session "
+                "that can answer prompts."
             )
             settings["copilot_url"] = st.text_input(
                 "Copilot URL",
                 value=os.getenv("SELENIUM_COPILOT_URL", SELENIUM_COPILOT_URL),
-            )
-            settings["chromedriver_path"] = st.text_input(
-                "ChromeDriver path",
-                value=os.getenv("SELENIUM_CHROMEDRIVER_PATH", os.getenv("CHROMEDRIVER_PATH", "")),
-                help="Optional. Leave blank to let Selenium Manager find the driver.",
-            )
-            settings["chrome_user_data_dir"] = st.text_input(
-                "Chrome user data dir",
-                value=os.getenv("SELENIUM_CHROME_USER_DATA_DIR", ""),
-                help="Optional. Use this to keep a logged-in Microsoft 365 Chrome profile.",
             )
             col1, col2 = st.columns(2)
             settings["initial_wait_seconds"] = col1.number_input(
@@ -138,11 +128,11 @@ def fallback_selector() -> tuple[bool, dict[str, Any]]:
                 max_value=300,
                 value=int(float(os.getenv("SELENIUM_COPILOT_INITIAL_WAIT_SECONDS", "10"))),
             )
-            settings["response_timeout_seconds"] = col2.number_input(
-                "Response timeout seconds",
-                min_value=30,
+            settings["response_wait_seconds"] = col2.number_input(
+                "Response wait seconds",
+                min_value=1,
                 max_value=600,
-                value=int(float(os.getenv("SELENIUM_COPILOT_RESPONSE_TIMEOUT_SECONDS", "120"))),
+                value=int(float(os.getenv("SELENIUM_COPILOT_RESPONSE_WAIT_SECONDS", "10"))),
             )
 
     return use_copilot, settings
@@ -193,15 +183,13 @@ def apply_fallback_settings(use_copilot: bool, settings: dict[str, Any]) -> None
         return
 
     set_env_if_value("SELENIUM_COPILOT_URL", settings.get("copilot_url"))
-    set_env_if_value("SELENIUM_CHROMEDRIVER_PATH", settings.get("chromedriver_path"))
-    set_env_if_value("SELENIUM_CHROME_USER_DATA_DIR", settings.get("chrome_user_data_dir"))
     set_env_if_value(
         "SELENIUM_COPILOT_INITIAL_WAIT_SECONDS",
         settings.get("initial_wait_seconds"),
     )
     set_env_if_value(
-        "SELENIUM_COPILOT_RESPONSE_TIMEOUT_SECONDS",
-        settings.get("response_timeout_seconds"),
+        "SELENIUM_COPILOT_RESPONSE_WAIT_SECONDS",
+        settings.get("response_wait_seconds"),
     )
 
 
