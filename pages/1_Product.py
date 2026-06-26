@@ -48,12 +48,7 @@ from template_profiles import (
     discover_template_profiles,
     resolve_template_profile,
 )
-from fallback_copilot import (
-    FALLBACK_PROVIDER_NONE,
-    FALLBACK_PROVIDER_OPENAI_API,
-    FALLBACK_PROVIDER_SELENIUM_COPILOT,
-    SELENIUM_COPILOT_URL,
-)
+from fallback_copilot import SELENIUM_COPILOT_URL
 
 
 def render() -> None:
@@ -61,11 +56,11 @@ def render() -> None:
     st.caption("Upload one PDF, parse it, review the compact schema, and generate Excel.")
 
     template_identifier, template_profile = template_selector()
-    fallback_provider, fallback_settings = fallback_selector()
+    use_copilot, fallback_settings = fallback_selector()
     uploaded_file = st.file_uploader("PDF termsheet", type=["pdf"])
 
     if st.button("Parse PDF", type="primary"):
-        parse_uploaded_pdf(uploaded_file, template_profile, fallback_provider, fallback_settings)
+        parse_uploaded_pdf(uploaded_file, template_profile, use_copilot, fallback_settings)
 
     draft = st.session_state.get("active_draft")
     if not draft:
@@ -113,25 +108,10 @@ def template_option_identifier(profile: TemplateProfile) -> str:
         return str(profile.template_path)
 
 
-def fallback_selector() -> tuple[str, dict[str, Any]]:
-    labels = {
-        FALLBACK_PROVIDER_NONE: "Off",
-        FALLBACK_PROVIDER_OPENAI_API: "OpenAI API",
-        FALLBACK_PROVIDER_SELENIUM_COPILOT: "Microsoft 365 Copilot via Selenium",
-    }
-    provider = st.selectbox(
-        "LLM fallback",
-        options=[
-            FALLBACK_PROVIDER_NONE,
-            FALLBACK_PROVIDER_OPENAI_API,
-            FALLBACK_PROVIDER_SELENIUM_COPILOT,
-        ],
-        index=1 if os.getenv("OPENAI_API_KEY") else 0,
-        format_func=lambda value: labels[value],
-    )
-
+def fallback_selector() -> tuple[bool, dict[str, Any]]:
+    use_copilot = st.toggle("Use Microsoft 365 Copilot via Selenium", value=False)
     settings: dict[str, Any] = {}
-    if provider == FALLBACK_PROVIDER_SELENIUM_COPILOT:
+    if use_copilot:
         with st.expander("Selenium Copilot settings", expanded=True):
             st.caption(
                 "Requires Chrome, ChromeDriver/Selenium Manager, and a Microsoft 365 chat session "
@@ -165,13 +145,13 @@ def fallback_selector() -> tuple[str, dict[str, Any]]:
                 value=int(float(os.getenv("SELENIUM_COPILOT_RESPONSE_TIMEOUT_SECONDS", "120"))),
             )
 
-    return provider, settings
+    return use_copilot, settings
 
 
 def parse_uploaded_pdf(
     uploaded_file: Any,
     template_profile: TemplateProfile | None,
-    fallback_provider: str,
+    use_copilot: bool,
     fallback_settings: dict[str, Any],
 ) -> None:
     if uploaded_file is None:
@@ -184,7 +164,7 @@ def parse_uploaded_pdf(
 
     uploaded_bytes = uploaded_file.getvalue()
     source_name = Path(uploaded_file.name).name
-    apply_fallback_settings(fallback_provider, fallback_settings)
+    apply_fallback_settings(use_copilot, fallback_settings)
 
     try:
         with TemporaryDirectory() as tmp:
@@ -193,8 +173,7 @@ def parse_uploaded_pdf(
             draft = parse_pdf_to_draft(
                 pdf_path,
                 template_profile=template_profile,
-                use_llm=fallback_provider != FALLBACK_PROVIDER_NONE,
-                fallback_provider=fallback_provider,
+                use_llm=use_copilot,
             )
     except Exception as exc:
         st.error(f"Could not parse PDF: {exc}")
@@ -209,8 +188,8 @@ def parse_uploaded_pdf(
     st.success("PDF parsed. Review the sections below.")
 
 
-def apply_fallback_settings(provider: str, settings: dict[str, Any]) -> None:
-    if provider != FALLBACK_PROVIDER_SELENIUM_COPILOT:
+def apply_fallback_settings(use_copilot: bool, settings: dict[str, Any]) -> None:
+    if not use_copilot:
         return
 
     set_env_if_value("SELENIUM_COPILOT_URL", settings.get("copilot_url"))
@@ -243,13 +222,12 @@ def show_draft_summary(draft: dict[str, Any]) -> None:
         st.success("All required fields are present for approval.")
 
     if draft.get("fallback_error"):
-        st.warning(f"OpenAI fallback issue: {draft['fallback_error']}")
+        st.warning(f"Copilot fallback issue: {draft['fallback_error']}")
 
     st.caption(
         f"Source: {draft.get('source_pdf')} | "
         f"Parser: {draft.get('parser_version')} | "
-        f"Fallback used: {draft.get('fallback_used')} | "
-        f"Provider: {draft.get('fallback_provider') or 'none'}"
+        f"Copilot fallback used: {draft.get('fallback_used')}"
     )
 
 

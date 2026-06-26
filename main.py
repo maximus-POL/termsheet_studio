@@ -21,7 +21,7 @@ from config import (
     ensure_directories,
 )
 from excel_writer import write_product_excel
-from fallback_copilot import enrich_product_data, is_openai_configured
+from fallback_copilot import enrich_product_data, is_copilot_configured
 from parser import PARSER_VERSION, get_missing_required_fields, parse_product_text
 from pdf_extract import extract_pdf_text
 from template_profiles import (
@@ -210,8 +210,8 @@ def process_pdf(pdf_path: Path, template_profile: TemplateProfile) -> Processing
         missing_required = get_missing_required_fields(fields)
 
         fallback_used = False
-        if is_openai_configured() or missing_required:
-            fallback_used = is_openai_configured()
+        if missing_required:
+            fallback_used = is_copilot_configured()
             fields = enrich_product_data(
                 pdf_path=pdf_path,
                 extracted_text=extracted_text,
