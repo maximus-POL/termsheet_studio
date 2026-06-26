@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 from excel_writer import write_product_excel
-from fallback_copilot import enrich_product_data, is_openai_configured
+from fallback_copilot import (
+    FALLBACK_PROVIDER_NONE,
+    FALLBACK_PROVIDER_OPENAI_API,
+    enrich_product_data,
+    is_fallback_provider_configured,
+    normalize_fallback_provider,
+)
 from parser import PARSER_VERSION, get_missing_required_fields, parse_product_text
 from pdf_extract import extract_pdf_text
 from schema import finalize_compact_product
@@ -21,6 +27,7 @@ class ProcessingDraft(TypedDict):
     processed_at: str
     parser_version: str
     fallback_used: bool
+    fallback_provider: str | None
     fallback_error: str | None
     missing_required: list[str]
     template: dict[str, str] | None
@@ -33,6 +40,7 @@ def parse_pdf_to_draft(
     *,
     template_profile: TemplateProfile | None = None,
     use_llm: bool = True,
+    fallback_provider: str | None = None,
 ) -> dict[str, Any]:
     extracted_text = extract_pdf_text(pdf_path)
     fields = parse_product_text(extracted_text)
@@ -41,16 +49,26 @@ def parse_pdf_to_draft(
 
     fallback_used = False
     fallback_error: str | None = None
+    selected_provider = normalize_fallback_provider(
+        fallback_provider if fallback_provider is not None else FALLBACK_PROVIDER_OPENAI_API
+    )
+    if not use_llm:
+        selected_provider = FALLBACK_PROVIDER_NONE
 
-    if use_llm and is_openai_configured():
+    if selected_provider != FALLBACK_PROVIDER_NONE:
         fallback_used = True
         try:
-            fields = enrich_product_data(
-                pdf_path=pdf_path,
-                extracted_text=extracted_text,
-                current_fields=fields,
-                missing_fields=missing_required,
-            )
+            if is_fallback_provider_configured(selected_provider):
+                fields = enrich_product_data(
+                    pdf_path=pdf_path,
+                    extracted_text=extracted_text,
+                    current_fields=fields,
+                    missing_fields=missing_required,
+                    provider=selected_provider,
+                    raise_errors=True,
+                )
+            else:
+                fallback_error = f"Fallback provider is not configured: {selected_provider}"
         except Exception as exc:
             fallback_error = str(exc)
 
@@ -62,6 +80,7 @@ def parse_pdf_to_draft(
         "processed_at": timestamp_iso(),
         "parser_version": PARSER_VERSION,
         "fallback_used": fallback_used,
+        "fallback_provider": selected_provider if fallback_used else None,
         "fallback_error": fallback_error,
         "missing_required": missing_required,
         "template": template_to_dict(template_profile),
@@ -89,6 +108,7 @@ def build_product_record_from_draft(
         "processed_at": draft.get("processed_at"),
         "parser_version": draft.get("parser_version", PARSER_VERSION),
         "fallback_used": bool(draft.get("fallback_used", False)),
+        "fallback_provider": draft.get("fallback_provider"),
         "fallback_error": draft.get("fallback_error"),
         "missing_required": normalize_string_list(draft.get("missing_required")),
         "template": normalize_mapping(draft.get("template")),

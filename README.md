@@ -6,7 +6,7 @@ Local Python MVP for turning PDF termsheets into upload-ready Excel files.
 
 1. Put PDF termsheets in `input/`.
 2. Add or edit your Excel template at `templates/upload_template.xlsx` or `templates/upload_template.xlsm`.
-3. Set `OPENAI_API_KEY` if you want LLM extraction to be preferred over regex extraction.
+3. Optionally enable an LLM fallback through OpenAI API or Microsoft 365 Copilot via Selenium.
 4. Adjust `schema.py` regexes and the template's `Field Mapping` sheet for your real termsheets and upload template.
 5. Run:
 
@@ -84,7 +84,7 @@ termsheet_uploader/
 - The preferred field-to-cell mapping lives inside the selected template on the `Field Mapping` sheet.
 - `template_mapping.py` is only a fallback for templates that do not contain a `Field Mapping` sheet.
 - `product.json` records the selected template name and path for traceability.
-- `fallback_copilot.py` uses OpenAI when `OPENAI_API_KEY` is set; model-provided values override regex values when present.
+- `fallback_copilot.py` supports OpenAI API and Microsoft 365 Copilot via Selenium; model-provided values override regex values when present.
 - `input/` and `output/` contents are ignored by Git so private termsheets and generated files are not committed.
 
 The runner uses a staging folder under `output/_staging` and only removes an input PDF after the PDF has been safely copied into either `output/processed/` or `output/failed/`.

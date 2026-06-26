@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -47,6 +48,12 @@ from template_profiles import (
     discover_template_profiles,
     resolve_template_profile,
 )
+from fallback_copilot import (
+    FALLBACK_PROVIDER_NONE,
+    FALLBACK_PROVIDER_OPENAI_API,
+    FALLBACK_PROVIDER_SELENIUM_COPILOT,
+    SELENIUM_COPILOT_URL,
+)
 
 
 def render() -> None:
@@ -54,11 +61,11 @@ def render() -> None:
     st.caption("Upload one PDF, parse it, review the compact schema, and generate Excel.")
 
     template_identifier, template_profile = template_selector()
-    use_llm = st.toggle("Use OpenAI fallback", value=True)
+    fallback_provider, fallback_settings = fallback_selector()
     uploaded_file = st.file_uploader("PDF termsheet", type=["pdf"])
 
     if st.button("Parse PDF", type="primary"):
-        parse_uploaded_pdf(uploaded_file, template_profile, use_llm)
+        parse_uploaded_pdf(uploaded_file, template_profile, fallback_provider, fallback_settings)
 
     draft = st.session_state.get("active_draft")
     if not draft:
@@ -106,10 +113,66 @@ def template_option_identifier(profile: TemplateProfile) -> str:
         return str(profile.template_path)
 
 
+def fallback_selector() -> tuple[str, dict[str, Any]]:
+    labels = {
+        FALLBACK_PROVIDER_NONE: "Off",
+        FALLBACK_PROVIDER_OPENAI_API: "OpenAI API",
+        FALLBACK_PROVIDER_SELENIUM_COPILOT: "Microsoft 365 Copilot via Selenium",
+    }
+    provider = st.selectbox(
+        "LLM fallback",
+        options=[
+            FALLBACK_PROVIDER_NONE,
+            FALLBACK_PROVIDER_OPENAI_API,
+            FALLBACK_PROVIDER_SELENIUM_COPILOT,
+        ],
+        index=1 if os.getenv("OPENAI_API_KEY") else 0,
+        format_func=lambda value: labels[value],
+    )
+
+    settings: dict[str, Any] = {}
+    if provider == FALLBACK_PROVIDER_SELENIUM_COPILOT:
+        with st.expander("Selenium Copilot settings", expanded=True):
+            st.caption(
+                "Requires Chrome, ChromeDriver/Selenium Manager, and a Microsoft 365 chat session "
+                "that can answer prompts. A visible browser may open during parsing."
+            )
+            settings["copilot_url"] = st.text_input(
+                "Copilot URL",
+                value=os.getenv("SELENIUM_COPILOT_URL", SELENIUM_COPILOT_URL),
+            )
+            settings["chromedriver_path"] = st.text_input(
+                "ChromeDriver path",
+                value=os.getenv("SELENIUM_CHROMEDRIVER_PATH", os.getenv("CHROMEDRIVER_PATH", "")),
+                help="Optional. Leave blank to let Selenium Manager find the driver.",
+            )
+            settings["chrome_user_data_dir"] = st.text_input(
+                "Chrome user data dir",
+                value=os.getenv("SELENIUM_CHROME_USER_DATA_DIR", ""),
+                help="Optional. Use this to keep a logged-in Microsoft 365 Chrome profile.",
+            )
+            col1, col2 = st.columns(2)
+            settings["initial_wait_seconds"] = col1.number_input(
+                "Initial wait seconds",
+                min_value=0,
+                max_value=300,
+                value=int(float(os.getenv("SELENIUM_COPILOT_INITIAL_WAIT_SECONDS", "10"))),
+            )
+            settings["response_timeout_seconds"] = col2.number_input(
+                "Response timeout seconds",
+                min_value=30,
+                max_value=600,
+                value=int(float(os.getenv("SELENIUM_COPILOT_RESPONSE_TIMEOUT_SECONDS", "120"))),
+            )
+
+    return provider, settings
+
+
 def parse_uploaded_pdf(
     uploaded_file: Any,
     template_profile: TemplateProfile | None,
-    use_llm: bool,
+    fallback_provider: str,
+    fallback_settings: dict[str, Any],
 ) -> None:
     if uploaded_file is None:
         st.warning("Upload a PDF before parsing.")
@@ -121,6 +184,7 @@ def parse_uploaded_pdf(
 
     uploaded_bytes = uploaded_file.getvalue()
     source_name = Path(uploaded_file.name).name
+    apply_fallback_settings(fallback_provider, fallback_settings)
 
     try:
         with TemporaryDirectory() as tmp:
@@ -129,7 +193,8 @@ def parse_uploaded_pdf(
             draft = parse_pdf_to_draft(
                 pdf_path,
                 template_profile=template_profile,
-                use_llm=use_llm,
+                use_llm=fallback_provider != FALLBACK_PROVIDER_NONE,
+                fallback_provider=fallback_provider,
             )
     except Exception as exc:
         st.error(f"Could not parse PDF: {exc}")
@@ -142,6 +207,31 @@ def parse_uploaded_pdf(
     st.session_state.active_product_record = None
     st.session_state.generated_excel_path = None
     st.success("PDF parsed. Review the sections below.")
+
+
+def apply_fallback_settings(provider: str, settings: dict[str, Any]) -> None:
+    if provider != FALLBACK_PROVIDER_SELENIUM_COPILOT:
+        return
+
+    set_env_if_value("SELENIUM_COPILOT_URL", settings.get("copilot_url"))
+    set_env_if_value("SELENIUM_CHROMEDRIVER_PATH", settings.get("chromedriver_path"))
+    set_env_if_value("SELENIUM_CHROME_USER_DATA_DIR", settings.get("chrome_user_data_dir"))
+    set_env_if_value(
+        "SELENIUM_COPILOT_INITIAL_WAIT_SECONDS",
+        settings.get("initial_wait_seconds"),
+    )
+    set_env_if_value(
+        "SELENIUM_COPILOT_RESPONSE_TIMEOUT_SECONDS",
+        settings.get("response_timeout_seconds"),
+    )
+
+
+def set_env_if_value(name: str, value: Any) -> None:
+    text = "" if value is None else str(value).strip()
+    if text:
+        os.environ[name] = text
+    else:
+        os.environ.pop(name, None)
 
 
 def show_draft_summary(draft: dict[str, Any]) -> None:
@@ -158,7 +248,8 @@ def show_draft_summary(draft: dict[str, Any]) -> None:
     st.caption(
         f"Source: {draft.get('source_pdf')} | "
         f"Parser: {draft.get('parser_version')} | "
-        f"Fallback used: {draft.get('fallback_used')}"
+        f"Fallback used: {draft.get('fallback_used')} | "
+        f"Provider: {draft.get('fallback_provider') or 'none'}"
     )
 
 
