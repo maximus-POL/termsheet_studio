@@ -9,6 +9,7 @@ from typing import Any
 
 import streamlit as st
 
+from config import TEMPLATE_DIR
 from schema import (
     ASSET_CLASSES,
     AUTOCALL_FREQUENCIES,
@@ -30,6 +31,7 @@ from services.processor import (
     export_product_excel,
     parse_pdf_to_draft,
 )
+from services.file_opener import FileOpenError, open_local_file
 from services.storage import (
     create_product_workspace,
     load_product_record,
@@ -63,8 +65,8 @@ def render() -> None:
         return
 
     show_draft_summary(draft)
-    render_review_form(draft)
     render_export_controls(template_identifier)
+    render_review_form(draft)
     render_debug_expanders()
 
 
@@ -80,15 +82,28 @@ def template_selector() -> tuple[str, TemplateProfile | None]:
         return selected, None
 
     st.caption(f"Selected template: {profile.template_path}")
+    if profile.template_path.suffix.lower() == ".xlsm":
+        st.caption(
+            "Macro-enabled output will be saved as .xlsm with the VBA project preserved. "
+            "Excel may still block unsigned or downloaded macros until the file/location is trusted."
+        )
     return selected, profile
 
 
 def build_template_options(profiles: list[TemplateProfile]) -> list[str]:
     options = [DEFAULT_TEMPLATE_NAME]
     for profile in profiles:
-        if profile.name not in options:
-            options.append(profile.name)
+        identifier = template_option_identifier(profile)
+        if identifier not in options:
+            options.append(identifier)
     return options
+
+
+def template_option_identifier(profile: TemplateProfile) -> str:
+    try:
+        return profile.template_path.relative_to(TEMPLATE_DIR).as_posix()
+    except ValueError:
+        return str(profile.template_path)
 
 
 def parse_uploaded_pdf(
@@ -151,12 +166,15 @@ def render_review_form(draft: dict[str, Any]) -> None:
     fields = compact_fields_from_draft(draft)
 
     with st.form("compact_product_form"):
-        edited_fields = render_compact_schema_sections(fields)
+        st.subheader("Actions")
         save_col, reviewed_col, approve_col, reject_col = st.columns(4)
         save_clicked = save_col.form_submit_button("Save", type="primary")
         reviewed_clicked = reviewed_col.form_submit_button("Mark reviewed")
         approve_clicked = approve_col.form_submit_button("Approve")
         reject_clicked = reject_col.form_submit_button("Reject")
+        st.divider()
+
+        edited_fields = render_compact_schema_sections(fields)
 
     action_status = None
     if reviewed_clicked:
@@ -466,12 +484,25 @@ def render_export_controls(template_identifier: str) -> None:
     if generated_path:
         path = Path(generated_path)
         if path.exists():
-            st.download_button(
+            download_col, open_col = st.columns(2)
+            download_col.download_button(
                 "Download generated Excel",
                 data=path.read_bytes(),
                 file_name=path.name,
                 mime=excel_mime_type(path),
             )
+            if open_col.button("Open generated Excel"):
+                open_generated_excel(path)
+
+
+def open_generated_excel(path: Path) -> None:
+    try:
+        open_local_file(path)
+    except (OSError, FileOpenError) as exc:
+        st.error(f"Could not open Excel file: {exc}")
+        return
+
+    st.success(f"Opened {path.name}")
 
 
 def generate_excel_for_saved_product(

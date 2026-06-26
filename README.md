@@ -79,7 +79,7 @@ termsheet_uploader/
 - One PDF is treated as one product.
 - No database is used.
 - PDF text extraction uses PyMuPDF.
-- Excel writing uses openpyxl.
+- Excel writing uses xlwings, so Microsoft Excel must be installed on the machine that generates workbooks.
 - `excel_writer.py` only handles workbook completion.
 - The preferred field-to-cell mapping lives inside the selected template on the `Field Mapping` sheet.
 - `template_mapping.py` is only a fallback for templates that do not contain a `Field Mapping` sheet.
@@ -144,6 +144,6 @@ python main.py --template bank_b
 
 Each workbook should carry its own `Field Mapping` sheet, so different templates can write the same parsed fields to completely different sheets and cells. If a workbook does not contain `Field Mapping`, the app falls back to `template_mapping.py`.
 
-Macro-enabled templates are supported with `.xlsm`. When the selected template is `.xlsm`, the app loads it with VBA preservation enabled and writes the generated workbook as `.xlsm`.
+Macro-enabled templates are supported with `.xlsm`. When the selected template is `.xlsm`, the app writes the workbook through xlwings/Excel and saves the generated workbook as `.xlsm`, preserving VBA projects and worksheet controls as Excel stores them.
 
 If `templates/upload_template.xlsx` is not present but `templates/upload_template.xlsm` is present, the default `python main.py` run uses the `.xlsm` template automatically.

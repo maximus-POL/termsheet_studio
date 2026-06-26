@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -22,31 +24,76 @@ def write_product_excel(product_data: dict[str, Any], template_path: Path, outpu
         raise ExcelTemplateError(f"Unsupported Excel template type: {template_path.suffix}")
 
     try:
-        from openpyxl import load_workbook
+        import xlwings as xw
     except ImportError as exc:
         raise ExcelTemplateError(
-            "openpyxl is not installed. Run: pip install -r requirements.txt"
+            "xlwings is not installed. Run: pip install -r requirements.txt"
         ) from exc
 
     output_path = output_path.with_suffix(template_path.suffix.lower())
-    workbook = load_workbook(template_path, keep_vba=is_macro_enabled_workbook(template_path))
-    cell_mapping = load_template_cell_mapping(workbook)
     fields = resolve_product_fields(product_data)
     if not isinstance(fields, dict):
         raise ExcelTemplateError("product_data must contain a 'fields' dictionary")
 
-    for field_name, target in cell_mapping.items():
-        value = fields.get(field_name)
-        if value in (None, ""):
-            continue
+    if template_path.resolve() == output_path.resolve():
+        raise ExcelTemplateError("Output path must be different from the template path")
 
-        worksheet, cell = resolve_target(workbook, target)
-        worksheet[cell] = value
-
-    remove_mapping_sheet(workbook)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
-    return output_path
+    if output_path.exists():
+        output_path.unlink()
+    shutil.copyfile(template_path, output_path)
+
+    app = None
+    book = None
+    try:
+        app = xw.App(visible=False, add_book=False)
+        configure_excel_app(app)
+        book = app.books.open(str(output_path), update_links=False, read_only=False)
+
+        cell_mapping = load_template_cell_mapping(book)
+        apply_cell_mapping(book, cell_mapping, fields)
+        remove_mapping_sheet(book)
+
+        book.save()
+        return output_path
+    except Exception as exc:
+        if isinstance(exc, ExcelTemplateError):
+            raise
+        raise ExcelTemplateError(f"Could not write Excel output with xlwings: {exc}") from exc
+    finally:
+        close_xlwings_book(book)
+        quit_xlwings_app(app)
+
+
+def configure_excel_app(app: Any) -> None:
+    set_xlwings_property(app, "display_alerts", False)
+    set_xlwings_property(app, "screen_updating", False)
+    set_xlwings_property(app, "enable_events", False)
+
+
+def set_xlwings_property(obj: Any, name: str, value: Any) -> None:
+    try:
+        setattr(obj, name, value)
+    except Exception:
+        return
+
+
+def close_xlwings_book(book: Any) -> None:
+    if book is None:
+        return
+    try:
+        book.close()
+    except Exception:
+        return
+
+
+def quit_xlwings_app(app: Any) -> None:
+    if app is None:
+        return
+    try:
+        app.quit()
+    except Exception:
+        return
 
 
 def resolve_product_fields(product_data: dict[str, Any]) -> dict[str, Any]:
@@ -56,43 +103,39 @@ def resolve_product_fields(product_data: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
-def is_macro_enabled_workbook(path: Path) -> bool:
-    return path.suffix.lower() == ".xlsm"
-
-
-def load_template_cell_mapping(workbook: Any) -> dict[str, str | dict[str, str | None]]:
-    if MAPPING_SHEET_NAME not in workbook.sheetnames:
+def load_template_cell_mapping(book: Any) -> dict[str, str | dict[str, str | None]]:
+    mapping_sheet = get_sheet(book, MAPPING_SHEET_NAME)
+    if mapping_sheet is None:
         return TEMPLATE_CELL_MAPPING
 
-    worksheet = workbook[MAPPING_SHEET_NAME]
-    headers = get_mapping_headers(worksheet)
+    rows = normalize_used_range_values(mapping_sheet.used_range.value)
+    if not rows:
+        raise ExcelTemplateError(f"'{MAPPING_SHEET_NAME}' sheet does not define any mappings")
+
+    headers = get_mapping_headers(rows[0])
     field_col = headers.get("field_name")
     cell_col = headers.get("cell")
     sheet_col = headers.get("sheet")
 
-    if not field_col or not cell_col:
+    if field_col is None or cell_col is None:
         raise ExcelTemplateError(
             f"'{MAPPING_SHEET_NAME}' sheet must have 'field_name' and 'cell' headers"
         )
 
     mapping: dict[str, dict[str, str | None]] = {}
-    for row_number in range(2, worksheet.max_row + 1):
-        field_name = normalize_cell_text(worksheet.cell(row_number, field_col).value)
+    for row_number, row in enumerate(rows[1:], start=2):
+        field_name = normalize_cell_text(row_value(row, field_col))
         if not field_name:
             continue
 
-        cell = normalize_cell_text(worksheet.cell(row_number, cell_col).value)
+        cell = normalize_cell_text(row_value(row, cell_col))
         if not cell:
             raise ExcelTemplateError(
                 f"'{MAPPING_SHEET_NAME}' row {row_number} has field_name "
                 f"'{field_name}' but no target cell"
             )
 
-        sheet_name = (
-            normalize_cell_text(worksheet.cell(row_number, sheet_col).value)
-            if sheet_col
-            else ""
-        )
+        sheet_name = normalize_cell_text(row_value(row, sheet_col)) if sheet_col is not None else ""
         mapping[field_name] = {"sheet": sheet_name or None, "cell": cell}
 
     if not mapping:
@@ -101,13 +144,35 @@ def load_template_cell_mapping(workbook: Any) -> dict[str, str | dict[str, str |
     return mapping
 
 
-def get_mapping_headers(worksheet: Any) -> dict[str, int]:
+def normalize_used_range_values(value: Any) -> list[list[Any]]:
+    if value is None:
+        return []
+
+    if not isinstance(value, list):
+        return [[value]]
+
+    if not value:
+        return []
+
+    if any(isinstance(item, list) for item in value):
+        return [item if isinstance(item, list) else [item] for item in value]
+
+    return [value]
+
+
+def get_mapping_headers(header_row: list[Any]) -> dict[str, int]:
     headers: dict[str, int] = {}
-    for cell in worksheet[1]:
-        header = normalize_header(cell.value)
+    for index, value in enumerate(header_row):
+        header = normalize_header(value)
         if header:
-            headers[header] = cell.column
+            headers[header] = index
     return headers
+
+
+def row_value(row: list[Any], index: int | None) -> Any:
+    if index is None or index >= len(row):
+        return None
+    return row[index]
 
 
 def normalize_header(value: Any) -> str:
@@ -120,9 +185,23 @@ def normalize_cell_text(value: Any) -> str:
     return str(value).strip()
 
 
-def resolve_target(workbook: Any, target: str | dict[str, str | None]) -> tuple[Any, str]:
+def apply_cell_mapping(
+    book: Any,
+    cell_mapping: dict[str, str | dict[str, str | None]],
+    fields: dict[str, Any],
+) -> None:
+    for field_name, target in cell_mapping.items():
+        value = fields.get(field_name)
+        if value in (None, ""):
+            continue
+
+        sheet, cell = resolve_target(book, target)
+        sheet.range(cell).value = value
+
+
+def resolve_target(book: Any, target: str | dict[str, str | None]) -> tuple[Any, str]:
     if isinstance(target, str):
-        return workbook.active, target
+        return active_output_sheet(book), normalize_cell_reference(target)
 
     sheet_name = target.get("sheet")
     cell = target.get("cell")
@@ -130,20 +209,57 @@ def resolve_target(workbook: Any, target: str | dict[str, str | None]) -> tuple[
         raise ExcelTemplateError(f"Invalid template mapping target: {target}")
 
     if sheet_name:
-        if sheet_name not in workbook.sheetnames:
+        sheet = get_sheet(book, sheet_name)
+        if sheet is None:
             raise ExcelTemplateError(f"Template sheet not found: {sheet_name}")
-        return workbook[sheet_name], cell
+        return sheet, normalize_cell_reference(cell)
 
-    return workbook.active, cell
+    return active_output_sheet(book), normalize_cell_reference(cell)
 
 
-def remove_mapping_sheet(workbook: Any) -> None:
-    if MAPPING_SHEET_NAME not in workbook.sheetnames:
+def active_output_sheet(book: Any) -> Any:
+    try:
+        active_sheet = book.sheets.active
+        if active_sheet.name != MAPPING_SHEET_NAME:
+            return active_sheet
+    except Exception:
+        pass
+
+    for sheet in iter_sheets(book):
+        if sheet.name != MAPPING_SHEET_NAME:
+            return sheet
+
+    raise ExcelTemplateError(
+        f"Template must contain at least one output sheet besides '{MAPPING_SHEET_NAME}'"
+    )
+
+
+def remove_mapping_sheet(book: Any) -> None:
+    mapping_sheet = get_sheet(book, MAPPING_SHEET_NAME)
+    if mapping_sheet is None:
         return
 
-    if len(workbook.sheetnames) <= 1:
+    if len(list(iter_sheets(book))) <= 1:
         raise ExcelTemplateError(
             f"Template must contain at least one output sheet besides '{MAPPING_SHEET_NAME}'"
         )
 
-    workbook.remove(workbook[MAPPING_SHEET_NAME])
+    mapping_sheet.delete()
+
+
+def get_sheet(book: Any, sheet_name: str) -> Any | None:
+    try:
+        return book.sheets[sheet_name]
+    except Exception:
+        return None
+
+
+def iter_sheets(book: Any) -> list[Any]:
+    return [sheet for sheet in book.sheets]
+
+
+def normalize_cell_reference(cell: str) -> str:
+    normalized = str(cell).replace("$", "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", normalized):
+        raise ExcelTemplateError(f"Invalid target cell reference: {cell}")
+    return normalized

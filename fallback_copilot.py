@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_MAX_TEXT_CHARS = 120_000
+OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 PRODUCT_FIELDS_JSON_SCHEMA = COMPACT_PRODUCT_JSON_SCHEMA
 
 DEVELOPER_PROMPT = """
@@ -87,19 +90,16 @@ def extract_fields_with_openai(
     current_fields: dict[str, Any],
     missing_fields: list[str],
 ) -> dict[str, Any]:
-    client = build_openai_client()
-    response = client.responses.create(
-        **build_openai_payload(
+    response = call_openai_responses_api(
+        build_openai_payload(
             pdf_path=pdf_path,
             extracted_text=extracted_text,
             current_fields=current_fields,
             missing_fields=missing_fields,
-        )
+        ),
     )
 
-    output_text = getattr(response, "output_text", None)
-    if not output_text:
-        output_text = extract_output_text_from_sdk_response(response)
+    output_text = extract_output_text_from_api_response(response)
 
     try:
         fields = json.loads(output_text)
@@ -112,37 +112,84 @@ def extract_fields_with_openai(
     return validate_model_fields(fields)
 
 
-def build_openai_client() -> Any:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:
-        raise OpenAIFallbackError(
-            "The openai package is not installed. Run: pip install -r requirements.txt"
-        ) from exc
+def call_openai_responses_api(payload: dict[str, Any]) -> dict[str, Any]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise OpenAIFallbackError("OPENAI_API_KEY is not set")
 
-    client_kwargs: dict[str, str] = {}
+    body = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        os.getenv("OPENAI_RESPONSES_URL", OPENAI_RESPONSES_URL),
+        data=body,
+        headers=openai_request_headers(api_key),
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=openai_timeout_seconds()) as response:
+            response_body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise OpenAIFallbackError(
+            f"OpenAI API request failed with HTTP {exc.code}: {error_body}"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise OpenAIFallbackError(f"OpenAI API request failed: {exc.reason}") from exc
+
+    try:
+        parsed = json.loads(response_body)
+    except json.JSONDecodeError as exc:
+        raise OpenAIFallbackError(f"OpenAI API response was not valid JSON: {response_body}") from exc
+
+    if not isinstance(parsed, dict):
+        raise OpenAIFallbackError("OpenAI API response JSON must be an object")
+
+    return parsed
+
+
+def openai_request_headers(api_key: str) -> dict[str, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
 
     organization = os.getenv("OPENAI_ORG_ID")
     if organization:
-        client_kwargs["organization"] = organization
+        headers["OpenAI-Organization"] = organization
 
     project = os.getenv("OPENAI_PROJECT_ID")
     if project:
-        client_kwargs["project"] = project
+        headers["OpenAI-Project"] = project
 
-    return OpenAI(**client_kwargs)
+    return headers
 
 
-def extract_output_text_from_sdk_response(response: Any) -> str:
+def openai_timeout_seconds() -> float:
+    raw_timeout = os.getenv("OPENAI_FALLBACK_TIMEOUT_SECONDS", "90")
+    try:
+        return float(raw_timeout)
+    except ValueError:
+        return 90.0
+
+
+def extract_output_text_from_api_response(response: dict[str, Any]) -> str:
+    direct_output_text = response.get("output_text")
+    if isinstance(direct_output_text, str) and direct_output_text.strip():
+        return direct_output_text
+
     output_parts: list[str] = []
 
-    for item in getattr(response, "output", []) or []:
-        for content in getattr(item, "content", []) or []:
-            refusal = getattr(content, "refusal", None)
+    for item in response.get("output", []) or []:
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []) or []:
+            if not isinstance(content, dict):
+                continue
+            refusal = content.get("refusal")
             if refusal:
                 raise OpenAIFallbackError(f"OpenAI model refused: {refusal}")
 
-            text = getattr(content, "text", None)
+            text = content.get("text")
             if text:
                 output_parts.append(text)
 

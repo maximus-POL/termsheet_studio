@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 
 from schema import get_path
+from services.file_opener import FileOpenError, open_local_file
 from services.storage import get_product_paths, list_products, load_product_record
 
 
@@ -150,12 +151,25 @@ def show_downloads(record: dict[str, Any]) -> None:
     for path in generated_files:
         if not path.exists():
             continue
-        st.download_button(
+        download_col, open_col = st.columns(2)
+        download_col.download_button(
             f"Download {path.name}",
             data=path.read_bytes(),
             file_name=path.name,
             mime=excel_mime_type(path),
         )
+        if open_col.button(f"Open {path.name}", key=f"open_{path}"):
+            open_generated_excel(path)
+
+
+def open_generated_excel(path: Path) -> None:
+    try:
+        open_local_file(path)
+    except (OSError, FileOpenError) as exc:
+        st.error(f"Could not open Excel file: {exc}")
+        return
+
+    st.success(f"Opened {path.name}")
 
 
 def generated_file_paths(record: dict[str, Any]) -> list[Path]:
