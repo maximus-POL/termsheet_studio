@@ -697,16 +697,13 @@ def render_workflow_actions(
     edited_status_rows: list[dict[str, Any]],
 ) -> None:
     status_counts = count_field_statuses(edited_status_rows)
-    approved_record = saved_product_is_approved()
 
-    approve_col, copilot_col, template_col, excel_col = st.columns(
-        [1.25, 1.35, 1.15, 1]
+    save_col, copilot_col, template_col, excel_col = st.columns(
+        [1, 1.35, 1.15, 1]
     )
-    if approve_col.button("Approve and save", type="primary", use_container_width=True):
-        approved_fields = finalize_compact_product(edited_fields)
-        approved_fields["review"]["status"] = "approved"
-        if save_active_product(draft, approved_fields):
-            st.rerun()
+    if save_col.button("Save", type="primary", use_container_width=True):
+        fields_to_save = finalize_compact_product(edited_fields)
+        save_active_product(draft, fields_to_save)
 
     if copilot_col.button("Use Microsoft 365 Copilot", use_container_width=True):
         parse_current_pdf_with_copilot()
@@ -716,15 +713,16 @@ def render_workflow_actions(
 
     if excel_col.button(
         "Generate Excel",
+        type="primary",
         use_container_width=True,
-        disabled=not approved_record or template_profile is None,
+        disabled=template_profile is None,
     ):
-        generate_excel_for_current_product(template_identifier)
+        fields_to_export = finalize_compact_product(edited_fields)
+        if save_active_product(draft, fields_to_export, show_success=False):
+            generate_excel_for_current_product(template_identifier)
 
-    if not approved_record:
-        st.caption("Approve and save the product before generating Excel.")
     if status_counts.get("missing", 0):
-        st.caption("Resolve missing fields before final approval.")
+        st.caption("Excel can be generated with missing fields; review warnings remain visible.")
 
 
 def build_field_editor_rows(fields: dict[str, Any]) -> list[dict[str, Any]]:
@@ -830,13 +828,6 @@ def build_product_from_review_editor(
     edited["review"]["missing_required"] = list(get_path(base_fields, "review.missing_required") or [])
     edited["review"]["warnings"] = list(get_path(base_fields, "review.warnings") or [])
     return finalize_compact_product(edited)
-
-
-def saved_product_is_approved() -> bool:
-    record = st.session_state.get("active_product_record")
-    if not isinstance(record, dict):
-        return False
-    return get_path(record.get("fields") or {}, "review.status") == "approved"
 
 
 def current_generated_excel_path() -> Path | None:
@@ -1383,7 +1374,12 @@ def dedupe_preserve_order(values: list[str]) -> list[str]:
     return result
 
 
-def save_active_product(draft: dict[str, Any], fields: dict[str, Any]) -> bool:
+def save_active_product(
+    draft: dict[str, Any],
+    fields: dict[str, Any],
+    *,
+    show_success: bool = True,
+) -> bool:
     uploaded_bytes = st.session_state.get("active_pdf_bytes")
     source_name = st.session_state.get("active_pdf_name") or draft.get("source_pdf")
     product_id = st.session_state.get("saved_product_id")
@@ -1417,7 +1413,8 @@ def save_active_product(draft: dict[str, Any], fields: dict[str, Any]) -> bool:
     st.session_state.saved_product_id = workspace_id
     st.session_state.active_product_record = record
     st.session_state.active_draft = draft
-    st.success(f"Product saved: {workspace_id}")
+    if show_success:
+        st.success(f"Product saved: {workspace_id}")
     return True
 
 
