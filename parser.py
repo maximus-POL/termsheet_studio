@@ -134,6 +134,12 @@ def apply_line_table_heuristics(product: dict[str, Any], lines: list[str]) -> No
 
     issue_price_line = value_after_label(lines, ("Issue Price", "Offer Price"))
     if issue_price_line:
+        issue_price_lower = issue_price_line.lower()
+        if "unit quotation" in issue_price_lower or "per unit" in issue_price_lower:
+            product["economics"]["notation"] = "units"
+        elif "nominal quotation" in issue_price_lower or "nominal" in issue_price_lower:
+            product["economics"]["notation"] = "nominal"
+
         issue_price_percent = parse_percent(issue_price_line) if "%" in issue_price_line else None
         if issue_price_percent is None:
             issue_price_amount = money_from_text(issue_price_line)
@@ -143,6 +149,21 @@ def apply_line_table_heuristics(product: dict[str, Any], lines: list[str]) -> No
                 ) * 100
         if issue_price_percent is not None:
             product["economics"]["issue_price_percent"] = round(issue_price_percent, 6)
+
+    certificates_issued = money_after_label(
+        lines,
+        (
+            "Number of Certificates Issued",
+            "No. of Certificates Issued",
+            "Certificates Issued",
+            "Number of Certificates",
+            "Number of Units",
+            "Units Issued",
+        ),
+    )
+    if certificates_issued is not None:
+        product["economics"]["number_of_certificates"] = certificates_issued
+        product["economics"]["notation"] = "units"
 
     if not product["dates"].get("initial_fixing_date"):
         product["dates"]["initial_fixing_date"] = date_after_label(

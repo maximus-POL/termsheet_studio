@@ -12,7 +12,8 @@ from schema import COMPACT_PRODUCT_JSON_SCHEMA, finalize_compact_product
 
 logger = logging.getLogger(__name__)
 
-URL_COPILOT = "https://m365.cloud.microsoft/chat"
+SELENIUM_COPILOT_URL = "https://m365.cloud.microsoft/chat"
+URL_COPILOT = SELENIUM_COPILOT_URL
 COPY_BUTTON_XPATH = "//button[@data-testid='CopyButtonTestId']"
 
 PREPROMPT = f"""
@@ -82,7 +83,7 @@ def run_copilot_prompt(prompt: str) -> str:
 
     driver = Chrome(service=service, options=chrome_options)
     try:
-        driver.get(os.getenv("SELENIUM_COPILOT_URL", URL_COPILOT))
+        driver.get(os.getenv("SELENIUM_COPILOT_URL", SELENIUM_COPILOT_URL))
         time.sleep(float(os.getenv("SELENIUM_COPILOT_INITIAL_WAIT_SECONDS", "10")))
 
         input_box = driver.switch_to.active_element

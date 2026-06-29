@@ -41,6 +41,48 @@ ASSET_CLASSES = (
     "multi_asset",
     "unknown",
 )
+UNDERLYING_ASSET_CLASSES = (
+    "equity",
+    "index",
+    "commodity",
+    "unknown",
+)
+CURRENCIES = (
+    "CHF",
+    "EUR",
+    "USD",
+    "GBP",
+    "JPY",
+    "PLN",
+    "AUD",
+    "CAD",
+    "NOK",
+    "SEK",
+    "DKK",
+    "HKD",
+    "SGD",
+)
+STRIKE_TYPES = (
+    "percent",
+    "amount",
+    "unknown",
+)
+NOTATION_TYPES = (
+    "units",
+    "nominal",
+    "unknown",
+)
+COUPON_CLEAN_DIRTY_TYPES = (
+    "clean",
+    "dirty",
+    "unknown",
+)
+ISSUER_OPTIONS = (
+    "UBS AG Zurich",
+    "UBS AG Jersey",
+    "UBS AG London",
+    "other",
+)
 COUPON_TYPES = (
     "none",
     "fixed",
@@ -109,7 +151,10 @@ ENUM_FIELDS: dict[str, tuple[str, ...]] = {
     "document.document_type": DOCUMENT_TYPES,
     "classification.product_family": PRODUCT_FAMILIES,
     "classification.asset_class": ASSET_CLASSES,
+    "economics.notation": NOTATION_TYPES,
+    "economics.strike_type": STRIKE_TYPES,
     "coupon.coupon_type": COUPON_TYPES,
+    "coupon.coupon_clean_dirty": COUPON_CLEAN_DIRTY_TYPES,
     "coupon.coupon_frequency": COUPON_FREQUENCIES,
     "barrier.barrier_type": BARRIER_TYPES,
     "autocall.autocall_frequency": AUTOCALL_FREQUENCIES,
@@ -145,7 +190,9 @@ UNDERLYING_JSON_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
     "properties": {
         "name": STRING_OR_NULL,
+        "bloomberg_code": STRING_OR_NULL,
         "ticker": STRING_OR_NULL,
+        "asset_class": {"type": ["string", "null"], "enum": [*UNDERLYING_ASSET_CLASSES, None]},
         "isin": STRING_OR_NULL,
         "currency": STRING_OR_NULL,
         "initial_fixing": NUMBER_OR_NULL,
@@ -154,7 +201,9 @@ UNDERLYING_JSON_SCHEMA: dict[str, Any] = {
     },
     "required": [
         "name",
+        "bloomberg_code",
         "ticker",
+        "asset_class",
         "isin",
         "currency",
         "initial_fixing",
@@ -231,6 +280,7 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
             "properties": {
                 "product_family": {"type": "string", "enum": list(PRODUCT_FAMILIES)},
                 "asset_class": {"type": "string", "enum": list(ASSET_CLASSES)},
+                "is_reverse_convertible": BOOLEAN_FIELD,
                 "is_autocallable": BOOLEAN_FIELD,
                 "has_barrier": BOOLEAN_FIELD,
                 "has_memory_coupon": BOOLEAN_FIELD,
@@ -239,6 +289,7 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
             "required": [
                 "product_family",
                 "asset_class",
+                "is_reverse_convertible",
                 "is_autocallable",
                 "has_barrier",
                 "has_memory_coupon",
@@ -250,17 +301,23 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "properties": {
                 "issue_currency": STRING_OR_NULL,
+                "notation": {"type": "string", "enum": list(NOTATION_TYPES)},
                 "denomination": NUMBER_OR_NULL,
+                "number_of_certificates": NUMBER_OR_NULL,
                 "nominal_amount": NUMBER_OR_NULL,
                 "issue_price_percent": NUMBER_OR_NULL,
                 "minimum_investment": NUMBER_OR_NULL,
+                "strike_type": {"type": "string", "enum": list(STRIKE_TYPES)},
             },
             "required": [
                 "issue_currency",
+                "notation",
                 "denomination",
+                "number_of_certificates",
                 "nominal_amount",
                 "issue_price_percent",
                 "minimum_investment",
+                "strike_type",
             ],
         },
         "dates": {
@@ -294,6 +351,10 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "properties": {
                 "coupon_type": {"type": "string", "enum": list(COUPON_TYPES)},
+                "coupon_clean_dirty": {
+                    "type": "string",
+                    "enum": list(COUPON_CLEAN_DIRTY_TYPES),
+                },
                 "coupon_rate_percent_pa": NUMBER_OR_NULL,
                 "coupon_frequency": {"type": "string", "enum": list(COUPON_FREQUENCIES)},
                 "coupon_trigger_percent": NUMBER_OR_NULL,
@@ -301,6 +362,7 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
             },
             "required": [
                 "coupon_type",
+                "coupon_clean_dirty",
                 "coupon_rate_percent_pa",
                 "coupon_frequency",
                 "coupon_trigger_percent",
@@ -339,6 +401,14 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
                 "autocall_trigger_percent",
             ],
         },
+        "listing": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "exchange": STRING_OR_NULL,
+            },
+            "required": ["exchange"],
+        },
         "lifecycle_events": {
             "type": "array",
             "items": LIFECYCLE_EVENT_JSON_SCHEMA,
@@ -372,6 +442,7 @@ COMPACT_PRODUCT_JSON_SCHEMA: dict[str, Any] = {
         "coupon",
         "barrier",
         "autocall",
+        "listing",
         "lifecycle_events",
         "review",
     ],
@@ -399,6 +470,7 @@ DEFAULT_PRODUCT: dict[str, Any] = {
     "classification": {
         "product_family": "unknown",
         "asset_class": "unknown",
+        "is_reverse_convertible": False,
         "is_autocallable": False,
         "has_barrier": False,
         "has_memory_coupon": False,
@@ -406,10 +478,13 @@ DEFAULT_PRODUCT: dict[str, Any] = {
     },
     "economics": {
         "issue_currency": None,
+        "notation": "unknown",
         "denomination": None,
+        "number_of_certificates": None,
         "nominal_amount": None,
         "issue_price_percent": None,
         "minimum_investment": None,
+        "strike_type": "unknown",
     },
     "dates": {
         "trade_date": None,
@@ -423,6 +498,7 @@ DEFAULT_PRODUCT: dict[str, Any] = {
     "underlyings": [],
     "coupon": {
         "coupon_type": "unknown",
+        "coupon_clean_dirty": "unknown",
         "coupon_rate_percent_pa": None,
         "coupon_frequency": "unknown",
         "coupon_trigger_percent": None,
@@ -439,6 +515,9 @@ DEFAULT_PRODUCT: dict[str, Any] = {
         "first_autocall_date": None,
         "autocall_frequency": "unknown",
         "autocall_trigger_percent": None,
+    },
+    "listing": {
+        "exchange": None,
     },
     "lifecycle_events": [],
     "review": {
@@ -537,6 +616,24 @@ PRODUCT_SCHEMA: tuple[FieldSpec, ...] = (
         value_type="number",
         patterns=(
             rf"\b(?:Denomination|Specified Denomination)\s*[:\-]\s*{MONEY_VALUE}",
+        ),
+    ),
+    FieldSpec(
+        name="economics.notation",
+        required=False,
+        patterns=(
+            r"\b(?:Notation|Quotation|Quote Type)\s*[:\-]?\s*(?P<value>unit quotation|nominal quotation|units?|nominal)\b",
+            r"\b(?P<value>unit quotation|nominal quotation)\b",
+        ),
+    ),
+    FieldSpec(
+        name="economics.number_of_certificates",
+        required=False,
+        value_type="number",
+        patterns=(
+            r"\b(?:Number of Certificates Issued|No\.?\s*of Certificates Issued|"
+            r"Certificates Issued|Number of Certificates|Number of Units|Units Issued)\s*[:\-]?\s*"
+            r"(?P<value>[\d,.' ]+)\b",
         ),
     ),
     FieldSpec(
@@ -681,6 +778,8 @@ def normalize_compact_product(product: dict[str, Any] | None) -> dict[str, Any]:
     normalized["schema_version"] = str(normalized.get("schema_version") or SCHEMA_VERSION)
     ensure_list(normalized, "underlyings")
     ensure_list(normalized, "lifecycle_events")
+    normalize_parties(normalized)
+    normalize_economics(normalized)
     normalize_underlyings(normalized)
     normalize_lifecycle_events(normalized)
     normalize_booleans(normalized)
@@ -718,7 +817,14 @@ def calculate_missing_required(product: dict[str, Any]) -> list[str]:
         missing.append("identity.isin_or_internal_product_id")
 
     underlyings = product.get("underlyings") or []
-    if not any(not is_missing_value(item.get("name")) for item in underlyings if isinstance(item, dict)):
+    if not any(
+        any(
+            not is_missing_value(item.get(key))
+            for key in ("name", "bloomberg_code", "ticker", "isin")
+        )
+        for item in underlyings
+        if isinstance(item, dict)
+    ):
         missing.append("underlyings[0].name")
 
     if not has_payoff_data(product):
@@ -1013,13 +1119,27 @@ def flatten_compact_product(product: dict[str, Any]) -> dict[str, Any]:
         "currency": compact["economics"].get("issue_currency"),
         "product_name": compact["identity"].get("product_name"),
         "product_type": compact["classification"].get("product_family"),
+        "is_reverse_convertible": compact["classification"].get("is_reverse_convertible"),
+        "is_autocallable": compact["autocall"].get("is_autocallable"),
         "issue_date": compact["dates"].get("issue_date"),
         "maturity_date": compact["dates"].get("maturity_date"),
         "underlying": underlying.get("name") if isinstance(underlying, dict) else None,
+        "underlying_bloomberg_code": (
+            underlying.get("bloomberg_code") if isinstance(underlying, dict) else None
+        ),
+        "underlying_ticker": underlying.get("ticker") if isinstance(underlying, dict) else None,
+        "underlying_asset_class": (
+            underlying.get("asset_class") if isinstance(underlying, dict) else None
+        ),
+        "notation": compact["economics"].get("notation"),
+        "number_of_certificates": compact["economics"].get("number_of_certificates"),
         "nominal_amount": compact["economics"].get("nominal_amount"),
+        "strike_type": compact["economics"].get("strike_type"),
         "coupon_rate": compact["coupon"].get("coupon_rate_percent_pa"),
+        "coupon_clean_dirty": compact["coupon"].get("coupon_clean_dirty"),
         "barrier": compact["barrier"].get("level_percent"),
         "observation_frequency": compact["coupon"].get("coupon_frequency"),
+        "listing_exchange": compact["listing"].get("exchange"),
     }
 
 
@@ -1077,6 +1197,26 @@ def ensure_list(product: dict[str, Any], key: str) -> None:
         product[key] = []
 
 
+def normalize_parties(product: dict[str, Any]) -> None:
+    parties = product.setdefault("parties", {})
+    parties["issuer"] = normalize_issuer(parties.get("issuer"))
+
+
+def normalize_economics(product: dict[str, Any]) -> None:
+    economics = product.setdefault("economics", {})
+    economics["notation"] = normalize_notation(economics.get("notation"))
+    economics["number_of_certificates"] = coerce_number(
+        economics.get("number_of_certificates")
+    )
+    economics["nominal_amount"] = coerce_number(economics.get("nominal_amount"))
+
+    if economics["notation"] == "unknown":
+        if not is_missing_value(economics.get("number_of_certificates")):
+            economics["notation"] = "units"
+        elif not is_missing_value(economics.get("nominal_amount")):
+            economics["notation"] = "nominal"
+
+
 def normalize_underlyings(product: dict[str, Any]) -> None:
     normalized: list[dict[str, Any]] = []
     for item in product.get("underlyings") or []:
@@ -1084,10 +1224,20 @@ def normalize_underlyings(product: dict[str, Any]) -> None:
             item = {"name": item}
         if not isinstance(item, dict):
             continue
+        bloomberg_code = item.get("bloomberg_code") or item.get("ticker")
+        underlying_asset_class = item.get("asset_class")
+        if isinstance(underlying_asset_class, str):
+            underlying_asset_class = normalize_enum_value(
+                underlying_asset_class, UNDERLYING_ASSET_CLASSES
+            )
+        else:
+            underlying_asset_class = "unknown"
         normalized.append(
             {
                 "name": item.get("name"),
+                "bloomberg_code": bloomberg_code,
                 "ticker": item.get("ticker"),
+                "asset_class": underlying_asset_class,
                 "isin": normalize_isin(item.get("isin")),
                 "currency": normalize_currency(item.get("currency")),
                 "initial_fixing": coerce_number(item.get("initial_fixing")),
@@ -1108,6 +1258,7 @@ def normalize_lifecycle_events(product: dict[str, Any]) -> None:
 
 def normalize_booleans(product: dict[str, Any]) -> None:
     for path in (
+        "classification.is_reverse_convertible",
         "classification.is_autocallable",
         "classification.has_barrier",
         "classification.has_memory_coupon",
@@ -1117,6 +1268,14 @@ def normalize_booleans(product: dict[str, Any]) -> None:
     ):
         set_path(product, path, bool(get_path(product, path)))
 
+    product_family = get_path(product, "classification.product_family")
+    if product_family in ("reverse_convertible", "barrier_reverse_convertible"):
+        set_path(product, "classification.is_reverse_convertible", True)
+    if (
+        get_path(product, "classification.is_reverse_convertible")
+        and product_family == "unknown"
+    ):
+        set_path(product, "classification.product_family", "reverse_convertible")
     if get_path(product, "autocall.is_autocallable"):
         set_path(product, "classification.is_autocallable", True)
     if get_path(product, "coupon.memory_feature"):
@@ -1219,6 +1378,42 @@ def normalize_currency(value: Any) -> str | None:
     if value in (None, ""):
         return None
     return str(value).strip().upper()[:3]
+
+
+def normalize_issuer(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+
+    text = str(value).strip()
+    if text in ISSUER_OPTIONS:
+        return text
+
+    lower = text.lower()
+    if lower == "other":
+        return "other"
+    if "jersey" in lower:
+        return "UBS AG Jersey"
+    if "london" in lower:
+        return "UBS AG London"
+    if "zurich" in lower or "zürich" in lower or "basel" in lower:
+        return "UBS AG Zurich"
+    if "ubs" in lower:
+        return "UBS AG London"
+    return "other"
+
+
+def normalize_notation(value: Any) -> str:
+    if value in (None, ""):
+        return "unknown"
+
+    text = str(value).strip().lower()
+    if text in NOTATION_TYPES:
+        return text
+    if "unit" in text or "certificate" in text:
+        return "units"
+    if "nominal" in text:
+        return "nominal"
+    return "unknown"
 
 
 def normalize_date_value(value: str) -> str:
